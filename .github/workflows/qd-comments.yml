@@ -100,7 +100,7 @@ jobs:
               for idx, ch in enumerate(batch):
                   cid, cname = ch['id'], ch['name']
                   # 段评分布
-                  summ = api(f'https://www.qidian.com/webcommon/chapterreview/reviewsummary?bookId={BOOK}&chapterId={cid}&_csrfToken={csrf}')
+                  summ = api(f'https://www.qidian.com/webcommon/chapterreview/reviewsummary?bookId={BOOK}&chapterId={cid}&_csrfToken={csrf}', retries=0)
                   if summ is None:
                       result['blockedAt'] = START + idx
                       print('BLOCKED_AT:', START + idx, flush=True)
@@ -115,20 +115,24 @@ jobs:
                           seg_ids.append((int(sid), int(cnt)))
                   entry = {'name': cname, 'segs': {}}
                   for sid, cnt in seg_ids:
-                      rl = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=20&segmentId={sid}&type=2&_csrfToken={csrf}')
+                      rl = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=20&segmentId={sid}&type=2&_csrfToken={csrf}', retries=0)
                       if rl is None:
-                          continue
+                          result['blockedAt'] = START + idx
+                          print('BLOCKED_AT:', START + idx, flush=True)
+                          break
                       lst = (rl.get('data') or {}).get('list') or []
                       rows = [[x.get('content',''), x.get('nickName',''), x.get('likeCount',0), x.get('createTime','')] for x in lst]
                       if rows:
                           entry['segs'][str(sid)] = {'n': cnt, 'r': rows}
-                      time.sleep(random.uniform(0.4, 0.9))
+                      time.sleep(random.uniform(0.3, 0.6))
+                  if result['blockedAt'] is not None:
+                      break
                   result['chapters'][cid] = entry
                   done = idx + 1
                   if done % 5 == 0 or done == len(batch):
                       tot = sum(len(e['segs']) for e in result['chapters'].values())
                       print(f'PROGRESS: {done}/{len(batch)} reqs={result["reqs"]} segs={tot}', flush=True)
-                  time.sleep(random.uniform(1.0, 2.0))
+                  time.sleep(random.uniform(0.6, 1.1))
 
               browser.close()
 
