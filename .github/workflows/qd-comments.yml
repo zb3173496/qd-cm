@@ -1,0 +1,130 @@
+name: qd-comments
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: '起始章节序号'
+        required: true
+        default: '0'
+      count:
+        description: '本批章节数'
+        required: true
+        default: '30'
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+      - name: scrape paragraph comments
+        run: |
+          python3 - << 'PYEOF'
+          from playwright.sync_api import sync_playwright
+          import json, time, re, random, os
+
+          BOOK = '1010868264'
+          START = int(os.environ.get('START', '0'))
+          COUNT = int(os.environ.get('COUNT', '30'))
+
+          result = {'bookId': BOOK, 'start': START, 'chapters': {}, 'blockedAt': None, 'reqs': 0}
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+              ctx = browser.new_context(
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                  viewport={'width': 1440, 'height': 900}, locale='zh-CN')
+              page = ctx.new_page()
+              page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=60000)
+              for i in range(15):
+                  time.sleep(2)
+                  if '诡秘' in page.title():
+                      break
+              print('TITLE:', page.title(), flush=True)
+              cookies = ctx.cookies('https://www.qidian.com')
+              csrf = [c['value'] for c in cookies if c['name'] == '_csrfToken']
+              csrf = csrf[0] if csrf else ''
+
+              def api(url, retries=2):
+                  for att in range(retries + 1):
+                      r = page.evaluate("""async (u) => {
+                          const res = await fetch(u, {headers:{'Accept':'application/json','X-Requested-With':'XMLHttpRequest'}});
+                          const txt = await res.text();
+                          let j=null; try{j=JSON.parse(txt)}catch(e){}
+                          return {status: res.status, json: j, head: txt.slice(0,100)};
+                      }""", url)
+                      result['reqs'] += 1
+                      if r['json'] is not None:
+                          return r['json']
+                      if att < retries:
+                          time.sleep(45)
+                  return None
+
+              # 目录
+              page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
+              time.sleep(8)
+              html = page.content()
+              pairs = re.findall(r'href="/chapter/1010868264/(\d+)/"[^>]*>\s*([^<]+?)\s*<', html)
+              seen = set()
+              cat = []
+              for cid, name in pairs:
+                  if cid not in seen:
+                      seen.add(cid)
+                      cat.append({'id': cid, 'name': name})
+              print('CATALOG:', len(cat), flush=True)
+              batch = cat[START:START + COUNT]
+
+              for idx, ch in enumerate(batch):
+                  cid, cname = ch['id'], ch['name']
+                  # 段评分布
+                  summ = api(f'https://www.qidian.com/webcommon/chapterreview/reviewsummary?bookId={BOOK}&chapterId={cid}&_csrfToken={csrf}')
+                  if summ is None:
+                      result['blockedAt'] = START + idx
+                      print('BLOCKED_AT:', START + idx, flush=True)
+                      break
+                  data = summ.get('data') or {}
+                  segs = data.get('segmentReviews') or data.get('list') or data.get('segments') or []
+                  seg_ids = []
+                  for s in segs:
+                      sid = s.get('segmentId') or s.get('segmentIdx')
+                      cnt = s.get('reviewCount') or s.get('count') or 0
+                      if sid and cnt and int(cnt) > 0:
+                          seg_ids.append((int(sid), int(cnt)))
+                  entry = {'name': cname, 'segs': {}}
+                  for sid, cnt in seg_ids:
+                      rl = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=20&segmentId={sid}&type=2&_csrfToken={csrf}')
+                      if rl is None:
+                          continue
+                      lst = (rl.get('data') or {}).get('list') or []
+                      rows = [[x.get('content',''), x.get('nickName',''), x.get('likeCount',0), x.get('createTime','')] for x in lst]
+                      if rows:
+                          entry['segs'][str(sid)] = {'n': cnt, 'r': rows}
+                      time.sleep(random.uniform(0.4, 0.9))
+                  result['chapters'][cid] = entry
+                  done = idx + 1
+                  if done % 5 == 0 or done == len(batch):
+                      tot = sum(len(e['segs']) for e in result['chapters'].values())
+                      print(f'PROGRESS: {done}/{len(batch)} reqs={result["reqs"]} segs={tot}', flush=True)
+                  time.sleep(random.uniform(1.0, 2.0))
+
+              browser.close()
+
+          result['nextStart'] = result['blockedAt'] if result['blockedAt'] is not None else START + len(batch)
+          with open('comments.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False)
+          tot_cm = sum(s['n'] for e in result['chapters'].values() for s in e['segs'].values())
+          print(f"SUMMARY: done={len(result['chapters'])} nextStart={result['nextStart']} reqs={result['reqs']} comments={tot_cm}", flush=True)
+          PYEOF
+        env:
+          START: ${{ github.event.inputs.start }}
+          COUNT: ${{ github.event.inputs.count }}
+      - name: upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comments-${{ github.event.inputs.start }}
+          path: comments.json
