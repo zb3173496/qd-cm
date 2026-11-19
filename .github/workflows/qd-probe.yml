@@ -48,12 +48,16 @@ jobs:
               r1 = api(f'https://www.qidian.com/ajax/book/category?bookId={BOOK}')
               print('CATEGORY:', r1['status'], 'isJson:', r1['isJson'], flush=True)
               if r1['json']:
+                  print('CAT_JSON:', json.dumps(r1['json'], ensure_ascii=False)[:900], flush=True)
                   vs = r1['json'].get('data', {}).get('vs', [])
-                  chs = [(c['id'], c['cN']) for v in vs for c in v.get('cs', [])]
+                  chs = []
+                  for v in vs:
+                      for c in v.get('cs', []):
+                          chs.append((c.get('id'), c.get('cN')))
                   print('CHAPTERS:', len(chs), 'first:', chs[0] if chs else None, flush=True)
 
               # 2) 第一章段评计数
-              cid = chs[0][0] if r1['json'] else '402733549'
+              cid = chs[0][0] if chs else '402733549'
               r2 = api(f'https://www.qidian.com/ajax/chapter/getchaptercomments?bookId={BOOK}&chapterId={cid}')
               print('COUNTS:', r2['status'], 'isJson:', r2['isJson'], flush=True)
               print('COUNTS_HEAD:', json.dumps(r2['json'], ensure_ascii=False)[:400] if r2['json'] else r2['head'], flush=True)
