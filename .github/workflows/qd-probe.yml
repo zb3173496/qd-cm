@@ -15,55 +15,57 @@ jobs:
         run: |
           python3 - << 'PYEOF'
           from playwright.sync_api import sync_playwright
-          import json, time
+          import json, time, re
 
-          BOOK = '1010868264'  # 诡秘之主
+          BOOK = '1010868264'
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
               ctx = browser.new_context(
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                   viewport={'width': 1440, 'height': 900}, locale='zh-CN')
               page = ctx.new_page()
-              reqs = []
-              page.on('request', lambda r: reqs.append(r.url) if 'ajax' in r.url or 'api' in r.url else None)
               page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=60000)
               for i in range(15):
                   time.sleep(2)
                   if '诡秘' in page.title():
                       break
-              print('TITLE:', page.title(), flush=True)
               csrf = [c['value'] for c in ctx.cookies('https://www.qidian.com') if c['name'] == '_csrfToken']
               csrf = csrf[0] if csrf else ''
-              print('CSRF_LEN:', len(csrf), flush=True)
 
-              def api(url, extra=None):
-                  return page.evaluate("""async ([u, extra]) => {
-                      const h = {'Accept': 'application/json'};
-                      if (extra) Object.assign(h, extra);
-                      const r = await fetch(u, {headers: h});
+              # 1) 目录页：抓 HTML 里的章节链接
+              page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
+              time.sleep(8)
+              html = page.content()
+              links = re.findall(r'/chapter/1010868264/([0-9]+)/', html)
+              uniq = list(dict.fromkeys(links))
+              print('CATALOG_LINKS:', len(uniq), 'first5:', uniq[:5], 'last3:', uniq[-3:], flush=True)
+
+              # 2) 章节页：抓 XHR 找段评计数接口
+              reqs = []
+              page.on('request', lambda r: reqs.append(r.url) if ('ajax' in r.url or 'api' in r.url) and 'csrfToken' not in r.url else None)
+              cid = uniq[0] if uniq else '402733549'
+              page.goto(f'https://www.qidian.com/chapter/1010868264/{cid}/', timeout=60000)
+              time.sleep(10)
+              print('CHAPTER_TITLE:', page.title(), flush=True)
+              print('CHAPTER_XHR:', json.dumps(reqs[:15]), flush=True)
+              ch_html = page.content()
+              # 段落评论数有时内嵌在 HTML
+              m = re.search(r'g_data\s*=\s*(\{.+?\})</script>', ch_html)
+              print('GDATA:', (m.group(1)[:300] if m else 'none'), flush=True)
+
+              # 3) reviewList 分页/加大 pageSize
+              def api(url):
+                  return page.evaluate("""async (u) => {
+                      const r = await fetch(u, {headers:{'Accept':'application/json','X-Requested-With':'XMLHttpRequest'}});
                       const txt = await r.text();
-                      let j = null; try { j = JSON.parse(txt); } catch(e) {}
-                      return {status: r.status, isJson: !!j, head: txt.slice(0,200), json: j};
-                  }""", [url, extra])
-
-              # A: 带 X-Requested-With 再试目录
-              r1 = api(f'https://www.qidian.com/ajax/book/category?bookId={BOOK}', {'X-Requested-With': 'XMLHttpRequest'})
-              print('CAT_A:', r1['status'], json.dumps(r1['json'], ensure_ascii=False)[:300] if r1['json'] else r1['head'], flush=True)
-
-              # B: 打开目录页，抓它自己发的 XHR
-              reqs.clear()
-              try:
-                  page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
-                  time.sleep(8)
-                  print('CAT_PAGE_TITLE:', page.title(), flush=True)
-                  print('XHR_SEEN:', json.dumps(reqs[:10]), flush=True)
-              except Exception as e:
-                  print('CAT_PAGE_ERR:', str(e)[:100], flush=True)
-
-              # C: 段评接口直测（用第一章已知 chapterId）
-              r2 = api(f'https://www.qidian.com/ajax/chapter/getchaptercomments?bookId={BOOK}&chapterId=402733549&_csrfToken={csrf}')
-              print('COUNTS:', r2['status'], json.dumps(r2['json'], ensure_ascii=False)[:400] if r2['json'] else r2['head'], flush=True)
-              r3 = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId=402733549&page=1&pageSize=20&segmentId=1&type=2&_csrfToken={csrf}')
-              print('REVIEWLIST:', r3['status'], json.dumps(r3['json'], ensure_ascii=False)[:600] if r3['json'] else r3['head'], flush=True)
+                      let j=null; try{j=JSON.parse(txt)}catch(e){}
+                      return {status:r.status, json:j, head:txt.slice(0,120)};
+                  }""", url)
+              r3 = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=100&segmentId=1&type=2&_csrfToken={csrf}')
+              if r3['json'] and r3['json'].get('data'):
+                  d = r3['json']['data']
+                  print('RL_P100:', 'list:', len(d.get('list',[])), 'total:', d.get('total'), flush=True)
+              else:
+                  print('RL_P100:', r3['status'], r3['head'], flush=True)
               browser.close()
           PYEOF
