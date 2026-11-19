@@ -68,7 +68,10 @@ jobs:
               page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
               time.sleep(8)
               html = page.content()
-              pairs = re.findall(r'href="/chapter/1010868264/(\d+)/"[^>]*>\s*([^<]+?)\s*<', html)
+              m = re.search(r'/chapter/1010868264/402733549/.{0,400}', html, re.S)
+              print('SAMPLE:', (m.group(0)[:400] if m else 'none'), flush=True)
+              pairs = re.findall(r'href="/chapter/1010868264/(\d+)/"[^>]*>([^<]*)', html)
+              print('PAIRS_RAW:', len(pairs), pairs[:3], flush=True)
               seen = set()
               cat = []
               for cid, name in pairs:
