@@ -11,7 +11,7 @@ jobs:
         run: |
           pip install playwright
           playwright install chromium --with-deps
-      - name: probe qidian comment api
+      - name: probe
         run: |
           python3 - << 'PYEOF'
           from playwright.sync_api import sync_playwright
@@ -24,47 +24,46 @@ jobs:
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                   viewport={'width': 1440, 'height': 900}, locale='zh-CN')
               page = ctx.new_page()
+              reqs = []
+              page.on('request', lambda r: reqs.append(r.url) if 'ajax' in r.url or 'api' in r.url else None)
               page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=60000)
               for i in range(15):
                   time.sleep(2)
-                  t = page.title()
-                  if '诡秘' in t:
+                  if '诡秘' in page.title():
                       break
-              print('TITLE:', t, flush=True)
-              csrf = ctx.cookies('https://www.qidian.com')
-              csrf = [c['value'] for c in csrf if c['name'] == '_csrfToken']
-              print('CSRF_LEN:', len(csrf[0]) if csrf else 0, flush=True)
-              time.sleep(3)
+              print('TITLE:', page.title(), flush=True)
+              csrf = [c['value'] for c in ctx.cookies('https://www.qidian.com') if c['name'] == '_csrfToken']
+              csrf = csrf[0] if csrf else ''
+              print('CSRF_LEN:', len(csrf), flush=True)
 
-              def api(url):
-                  return page.evaluate("""async (u) => {
-                      const r = await fetch(u, {headers: {'Accept': 'application/json'}});
+              def api(url, extra=None):
+                  return page.evaluate("""async ([u, extra]) => {
+                      const h = {'Accept': 'application/json'};
+                      if (extra) Object.assign(h, extra);
+                      const r = await fetch(u, {headers: h});
                       const txt = await r.text();
                       let j = null; try { j = JSON.parse(txt); } catch(e) {}
-                      return {status: r.status, isJson: !!j, head: txt.slice(0,150), json: j};
-                  }""", url)
+                      return {status: r.status, isJson: !!j, head: txt.slice(0,200), json: j};
+                  }""", [url, extra])
 
-              # 1) 章节目录
-              r1 = api(f'https://www.qidian.com/ajax/book/category?bookId={BOOK}')
-              print('CATEGORY:', r1['status'], 'isJson:', r1['isJson'], flush=True)
-              if r1['json']:
-                  print('CAT_JSON:', json.dumps(r1['json'], ensure_ascii=False)[:900], flush=True)
-                  vs = r1['json'].get('data', {}).get('vs', [])
-                  chs = []
-                  for v in vs:
-                      for c in v.get('cs', []):
-                          chs.append((c.get('id'), c.get('cN')))
-                  print('CHAPTERS:', len(chs), 'first:', chs[0] if chs else None, flush=True)
+              # A: 带 X-Requested-With 再试目录
+              r1 = api(f'https://www.qidian.com/ajax/book/category?bookId={BOOK}', {'X-Requested-With': 'XMLHttpRequest'})
+              print('CAT_A:', r1['status'], json.dumps(r1['json'], ensure_ascii=False)[:300] if r1['json'] else r1['head'], flush=True)
 
-              # 2) 第一章段评计数
-              cid = chs[0][0] if chs else '402733549'
-              r2 = api(f'https://www.qidian.com/ajax/chapter/getchaptercomments?bookId={BOOK}&chapterId={cid}')
-              print('COUNTS:', r2['status'], 'isJson:', r2['isJson'], flush=True)
-              print('COUNTS_HEAD:', json.dumps(r2['json'], ensure_ascii=False)[:400] if r2['json'] else r2['head'], flush=True)
+              # B: 打开目录页，抓它自己发的 XHR
+              reqs.clear()
+              try:
+                  page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
+                  time.sleep(8)
+                  print('CAT_PAGE_TITLE:', page.title(), flush=True)
+                  print('XHR_SEEN:', json.dumps(reqs[:10]), flush=True)
+              except Exception as e:
+                  print('CAT_PAGE_ERR:', str(e)[:100], flush=True)
 
-              # 3) 段评列表（segmentId=1）
-              r3 = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=20&segmentId=1&type=2&_csrfToken={csrf[0] if csrf else ""}')
-              print('REVIEWLIST:', r3['status'], 'isJson:', r3['isJson'], flush=True)
-              print('REVIEWLIST_HEAD:', json.dumps(r3['json'], ensure_ascii=False)[:600] if r3['json'] else r3['head'], flush=True)
+              # C: 段评接口直测（用第一章已知 chapterId）
+              r2 = api(f'https://www.qidian.com/ajax/chapter/getchaptercomments?bookId={BOOK}&chapterId=402733549&_csrfToken={csrf}')
+              print('COUNTS:', r2['status'], json.dumps(r2['json'], ensure_ascii=False)[:400] if r2['json'] else r2['head'], flush=True)
+              r3 = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId=402733549&page=1&pageSize=20&segmentId=1&type=2&_csrfToken={csrf}')
+              print('REVIEWLIST:', r3['status'], json.dumps(r3['json'], ensure_ascii=False)[:600] if r3['json'] else r3['head'], flush=True)
               browser.close()
           PYEOF
