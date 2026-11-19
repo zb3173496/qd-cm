@@ -85,11 +85,14 @@ jobs:
               pairs = re.findall(r'href="(?:https?:)?//www\.qidian\.com/chapter/1010868264/(\d+)/"[^>]*>(.*?)</a>', html, re.S)
               pairs = [(cid, re.sub(r'<[^>]+>', '', nm).strip()) for cid, nm in pairs]
               print('PAIRS_RAW:', len(pairs), pairs[:3], flush=True)
-              seen = set()
               cat = []
+              idx = {}
               for cid, name in pairs:
-                  if cid not in seen:
-                      seen.add(cid)
+                  if cid in idx:
+                      if name and not cat[idx[cid]]['name']:
+                          cat[idx[cid]]['name'] = name
+                  else:
+                      idx[cid] = len(cat)
                       cat.append({'id': cid, 'name': name})
               print('CATALOG:', len(cat), flush=True)
               batch = cat[START:START + COUNT]
