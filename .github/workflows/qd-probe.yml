@@ -1,0 +1,66 @@
+name: qd-probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+      - name: probe qidian comment api
+        run: |
+          python3 - << 'PYEOF'
+          from playwright.sync_api import sync_playwright
+          import json, time
+
+          BOOK = '1010868264'  # 诡秘之主
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+              ctx = browser.new_context(
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                  viewport={'width': 1440, 'height': 900}, locale='zh-CN')
+              page = ctx.new_page()
+              page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=60000)
+              for i in range(15):
+                  time.sleep(2)
+                  t = page.title()
+                  if '诡秘' in t:
+                      break
+              print('TITLE:', t, flush=True)
+              csrf = ctx.cookies('https://www.qidian.com')
+              csrf = [c['value'] for c in csrf if c['name'] == '_csrfToken']
+              print('CSRF_LEN:', len(csrf[0]) if csrf else 0, flush=True)
+              time.sleep(3)
+
+              def api(url):
+                  return page.evaluate("""async (u) => {
+                      const r = await fetch(u, {headers: {'Accept': 'application/json'}});
+                      const txt = await r.text();
+                      let j = null; try { j = JSON.parse(txt); } catch(e) {}
+                      return {status: r.status, isJson: !!j, head: txt.slice(0,150), json: j};
+                  }""", url)
+
+              # 1) 章节目录
+              r1 = api(f'https://www.qidian.com/ajax/book/category?bookId={BOOK}')
+              print('CATEGORY:', r1['status'], 'isJson:', r1['isJson'], flush=True)
+              if r1['json']:
+                  vs = r1['json'].get('data', {}).get('vs', [])
+                  chs = [(c['id'], c['cN']) for v in vs for c in v.get('cs', [])]
+                  print('CHAPTERS:', len(chs), 'first:', chs[0] if chs else None, flush=True)
+
+              # 2) 第一章段评计数
+              cid = chs[0][0] if r1['json'] else '402733549'
+              r2 = api(f'https://www.qidian.com/ajax/chapter/getchaptercomments?bookId={BOOK}&chapterId={cid}')
+              print('COUNTS:', r2['status'], 'isJson:', r2['isJson'], flush=True)
+              print('COUNTS_HEAD:', json.dumps(r2['json'], ensure_ascii=False)[:400] if r2['json'] else r2['head'], flush=True)
+
+              # 3) 段评列表（segmentId=1）
+              r3 = api(f'https://www.qidian.com/ajax/chapterReview/reviewList?bookId={BOOK}&chapterId={cid}&page=1&pageSize=20&segmentId=1&type=2&_csrfToken={csrf[0] if csrf else ""}')
+              print('REVIEWLIST:', r3['status'], 'isJson:', r3['isJson'], flush=True)
+              print('REVIEWLIST_HEAD:', json.dumps(r3['json'], ensure_ascii=False)[:600] if r3['json'] else r3['head'], flush=True)
+              browser.close()
+          PYEOF
