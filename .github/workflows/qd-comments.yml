@@ -70,7 +70,8 @@ jobs:
               html = page.content()
               m = re.search(r'/chapter/1010868264/402733549/.{0,400}', html, re.S)
               print('SAMPLE:', (m.group(0)[:400] if m else 'none'), flush=True)
-              pairs = re.findall(r'href="/chapter/1010868264/(\d+)/"[^>]*>([^<]*)', html)
+              pairs = re.findall(r'href="(?:https?:)?//www\.qidian\.com/chapter/1010868264/(\d+)/"[^>]*>(.*?)</a>', html, re.S)
+              pairs = [(cid, re.sub(r'<[^>]+>', '', nm).strip()) for cid, nm in pairs]
               print('PAIRS_RAW:', len(pairs), pairs[:3], flush=True)
               seen = set()
               cat = []
