@@ -55,7 +55,7 @@ jobs:
               csrf = [c['value'] for c in cookies if c['name'] == '_csrfToken']
               csrf = csrf[0] if csrf else ''
 
-              def api(url, retries=2):
+              def api(url, retries=1):
                   for att in range(retries + 1):
                       r = page.evaluate("""async (u) => {
                           const res = await fetch(u, {headers:{'Accept':'application/json','X-Requested-With':'XMLHttpRequest'}});
@@ -67,7 +67,7 @@ jobs:
                       if r['json'] is not None:
                           return r['json']
                       if att < retries:
-                          time.sleep(45)
+                          time.sleep(20)
                   return None
 
               # 目录
@@ -124,7 +124,7 @@ jobs:
                       rows = [[x.get('content',''), x.get('nickName',''), x.get('likeCount',0), x.get('createTime','')] for x in lst]
                       if rows:
                           entry['segs'][str(sid)] = {'n': cnt, 'r': rows}
-                      time.sleep(random.uniform(0.3, 0.6))
+                      time.sleep(random.uniform(1.2, 2.2))
                   if result['blockedAt'] is not None:
                       break
                   result['chapters'][cid] = entry
@@ -132,7 +132,7 @@ jobs:
                   if done % 5 == 0 or done == len(batch):
                       tot = sum(len(e['segs']) for e in result['chapters'].values())
                       print(f'PROGRESS: {done}/{len(batch)} reqs={result["reqs"]} segs={tot}', flush=True)
-                  time.sleep(random.uniform(0.6, 1.1))
+                  time.sleep(random.uniform(0.8, 1.4))
 
               browser.close()
 
