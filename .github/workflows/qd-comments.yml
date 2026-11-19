@@ -39,8 +39,14 @@ jobs:
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                   viewport={'width': 1440, 'height': 900}, locale='zh-CN')
               page = ctx.new_page()
-              page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=60000)
-              for i in range(15):
+              for att in range(4):
+                  try:
+                      page.goto(f'https://www.qidian.com/book/{BOOK}', timeout=90000, wait_until='domcontentloaded')
+                      break
+                  except Exception as e:
+                      print('GOTO_RETRY', att, str(e)[:80], flush=True)
+                      time.sleep(10)
+              for i in range(20):
                   time.sleep(2)
                   if '诡秘' in page.title():
                       break
@@ -65,8 +71,14 @@ jobs:
                   return None
 
               # 目录
-              page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=60000)
-              time.sleep(8)
+              for att in range(4):
+                  try:
+                      page.goto(f'https://www.qidian.com/book/{BOOK}/catalog', timeout=90000, wait_until='domcontentloaded')
+                      break
+                  except Exception as e:
+                      print('CAT_RETRY', att, str(e)[:80], flush=True)
+                      time.sleep(10)
+              time.sleep(10)
               html = page.content()
               m = re.search(r'/chapter/1010868264/402733549/.{0,400}', html, re.S)
               print('SAMPLE:', (m.group(0)[:400] if m else 'none'), flush=True)
