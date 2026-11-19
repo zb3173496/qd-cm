@@ -102,15 +102,13 @@ jobs:
                       result['blockedAt'] = START + idx
                       print('BLOCKED_AT:', START + idx, flush=True)
                       break
-                  if START + idx == START:
-                      print('SUMM_SAMPLE:', json.dumps(summ, ensure_ascii=False)[:800], flush=True)
                   data = summ.get('data') or {}
-                  segs = data.get('segmentReviews') or data.get('list') or data.get('segments') or []
+                  segs = data.get('list') or []
                   seg_ids = []
-                  for s in segs:
-                      sid = s.get('segmentId') or s.get('segmentIdx')
-                      cnt = s.get('reviewCount') or s.get('count') or 0
-                      if sid and cnt and int(cnt) > 0:
+                  for sg in segs:
+                      sid = sg.get('segmentId')
+                      cnt = sg.get('reviewNum') or 0
+                      if sid and int(sid) >= 1 and int(cnt) > 0:
                           seg_ids.append((int(sid), int(cnt)))
                   entry = {'name': cname, 'segs': {}}
                   for sid, cnt in seg_ids:
